@@ -65,6 +65,9 @@ class RunnerService
             return $this->getExecutionSummary();
         }
 
+        // Sort runners by filename (timestamp-based names will be sorted chronologically)
+        $runnersFiles = $this->sortRunnersByName($runnersFiles);
+
         Log::info('Starting runner execution', [
             'total_files' => count($runnersFiles),
             'tag_filter' => $tag,
@@ -137,6 +140,26 @@ class RunnerService
         }
 
         return array_unique($runnersFiles);
+    }
+
+    /**
+     * Sort runners by filename across all pools.
+     *
+     * @param array $runnersFiles
+     * @return array
+     */
+    private function sortRunnersByName(array $runnersFiles): array
+    {
+        usort($runnersFiles, function ($a, $b) {
+            return strcmp(basename($a), basename($b));
+        });
+
+        Log::debug('Sorted runners by filename', [
+            'first' => !empty($runnersFiles) ? basename($runnersFiles[0]) : null,
+            'last' => !empty($runnersFiles) ? basename(end($runnersFiles)) : null,
+        ]);
+
+        return $runnersFiles;
     }
 
     /**
