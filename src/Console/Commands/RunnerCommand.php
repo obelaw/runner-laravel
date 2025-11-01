@@ -11,7 +11,9 @@ class RunnerCommand extends Command
     /**
      * Signature with rich filtering & execution controls.
      */
-    protected $signature = 'runner:run {--tag= : Filter runners by tag}';
+    protected $signature = 'runner:run 
+                            {--tag= : Filter runners by tag}
+                            {--force : Force re-execution of all runners (including TYPE_ONCE)}';
 
     /**
      * The console command description.
@@ -23,6 +25,7 @@ class RunnerCommand extends Command
     public function handle(): void
     {
         $tag = $this->option('tag');
+        $force = $this->option('force');
         
         if ($tag) {
             $this->info("Running runners with tag: {$tag}");
@@ -30,7 +33,16 @@ class RunnerCommand extends Command
             $this->info("Running all runners...");
         }
 
+        if ($force) {
+            $this->warn("Force mode: Re-executing all runners including TYPE_ONCE");
+        }
+
         $runnerService = new RunnerService(RunnerPool::getPaths());
+        
+        if ($force) {
+            $runnerService->force(true);
+        }
+
         $summary = $runnerService->run($tag);
 
         $this->displaySummary($summary, $tag);
@@ -46,7 +58,7 @@ class RunnerCommand extends Command
     {
         $this->newLine();
         
-        if ($summary['executed_count'] === 0) {
+        if ($summary['executed_count'] === 0 && $summary['skipped_count'] === 0) {
             if ($tag) {
                 $this->warn("No runners found with tag: {$tag}");
             } else {
@@ -61,11 +73,23 @@ class RunnerCommand extends Command
             $this->error("✗ Executed {$summary['executed_count']} runner(s) with {$summary['error_count']} error(s)");
         }
 
+        if ($summary['skipped_count'] > 0) {
+            $this->warn("⊘ Skipped {$summary['skipped_count']} runner(s) (TYPE_ONCE already executed)");
+        }
+
         if (!empty($summary['executed_files'])) {
             $this->newLine();
             $this->line('Executed runners:');
             foreach ($summary['executed_files'] as $file) {
-                $this->line("  - {$file}");
+                $this->line("  ✓ {$file}");
+            }
+        }
+
+        if (!empty($summary['skipped_files'])) {
+            $this->newLine();
+            $this->line('Skipped runners:');
+            foreach ($summary['skipped_files'] as $file) {
+                $this->line("  ⊘ {$file}");
             }
         }
 
@@ -73,7 +97,7 @@ class RunnerCommand extends Command
             $this->newLine();
             $this->error('Errors encountered:');
             foreach ($summary['errors'] as $error) {
-                $this->error("  - {$error['file']}: {$error['error']}");
+                $this->error("  ✗ " . basename($error['file']) . ": {$error['error']}");
             }
         }
     }

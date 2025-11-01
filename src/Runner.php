@@ -4,6 +4,9 @@ namespace Obelaw\Runner;
 
 abstract class Runner
 {
+    const TYPE_ONCE = 'once';
+    const TYPE_ALWAYS = 'always';
+
     /**
      * The tag of the runner for filtering execution.
      *
@@ -26,11 +29,11 @@ abstract class Runner
     public ?string $description = null;
 
     /**
-     * Whether this runner can be executed multiple times.
+     * The type of runner execution: 'once' or 'always'.
      *
-     * @var bool
+     * @var string
      */
-    protected bool $allowMultipleRuns = false;
+    protected string $type = self::TYPE_ONCE;
 
     /**
      * Execute the runner logic.
@@ -125,13 +128,60 @@ abstract class Runner
     }
 
     /**
+     * Get the runner type.
+     *
+     * @return string
+     */
+    public function getType(): string
+    {
+        return $this->type;
+    }
+
+    /**
+     * Set the runner type.
+     *
+     * @param string $type
+     * @return static
+     */
+    public function setType(string $type): static
+    {
+        if (!in_array($type, [self::TYPE_ONCE, self::TYPE_ALWAYS])) {
+            throw new \InvalidArgumentException("Invalid runner type. Must be 'once' or 'always'.");
+        }
+
+        $this->type = $type;
+        return $this;
+    }
+
+    /**
+     * Check if the runner type is 'once'.
+     *
+     * @return bool
+     */
+    public function isTypeOnce(): bool
+    {
+        return $this->type === self::TYPE_ONCE;
+    }
+
+    /**
+     * Check if the runner type is 'always'.
+     *
+     * @return bool
+     */
+    public function isTypeAlways(): bool
+    {
+        return $this->type === self::TYPE_ALWAYS;
+    }
+
+    /**
      * Check if multiple runs are allowed.
+     * Deprecated: Use isTypeAlways() instead.
      *
      * @return bool
      */
     public function allowsMultipleRuns(): bool
     {
-        return $this->allowMultipleRuns;
+        return $this->isTypeAlways();
     }
 
     /**
@@ -146,7 +196,7 @@ abstract class Runner
             'tag' => $this->tag,
             'priority' => $this->priority,
             'description' => $this->description,
-            'allow_multiple_runs' => $this->allowMultipleRuns,
+            'type' => $this->type,
         ];
     }
 }

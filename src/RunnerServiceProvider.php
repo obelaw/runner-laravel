@@ -26,6 +26,8 @@ class RunnerServiceProvider extends ServiceProvider
     public function boot()
     {
         if ($this->app->runningInConsole()) {
+            $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
+
             $this->commands([
                 RunnerCommand::class,
             ]);

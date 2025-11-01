@@ -3,6 +3,7 @@
 namespace Obelaw\Runner\Services;
 
 use Obelaw\Runner\Runner;
+use Obelaw\Runner\Models\RunnerModel;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use Exception;
@@ -12,12 +13,39 @@ class RunnerService
 {
     private array $runnerPools;
     private array $executedFiles = [];
+    private array $skippedFiles = [];
     private array $errors = [];
+    private bool $trackExecutions = true;
+    private bool $force = false;
 
     public function __construct(array $runnerPools)
     {
         $this->validateRunnerPools($runnerPools);
         $this->runnerPools = $runnerPools;
+    }
+
+    /**
+     * Enable or disable execution tracking.
+     *
+     * @param bool $track
+     * @return $this
+     */
+    public function trackExecutions(bool $track = true): self
+    {
+        $this->trackExecutions = $track;
+        return $this;
+    }
+
+    /**
+     * Force execution of all runners.
+     *
+     * @param bool $force
+     * @return $this
+     */
+    public function force(bool $force = true): self
+    {
+        $this->force = $force;
+        return $this;
     }
 
     /**
@@ -39,7 +67,8 @@ class RunnerService
 
         Log::info('Starting runner execution', [
             'total_files' => count($runnersFiles),
-            'tag_filter' => $tag
+            'tag_filter' => $tag,
+            'force' => $this->force
         ]);
 
         foreach ($runnersFiles as $file) {
@@ -118,6 +147,8 @@ class RunnerService
      */
     private function executeRunner(string $file, ?string $tag = null): void
     {
+        $runnerName = basename($file);
+
         try {
             if (!file_exists($file) || !is_readable($file)) {
                 throw new Exception("File is not readable: {$file}");
@@ -130,31 +161,39 @@ class RunnerService
                 return;
             }
 
+            // Check if runner should be skipped based on type
+            if (!$this->force && $this->trackExecutions && $this->shouldSkipBasedOnType($runnerName, $runner)) {
+                return;
+            }
+
             // Check if runner should run
             if ($runner instanceof Runner && !$runner->shouldRun()) {
                 Log::debug("Skipping runner due to shouldRun() condition", [
-                    'file' => basename($file)
+                    'file' => $runnerName
                 ]);
+                $this->skippedFiles[] = $file;
                 return;
             }
 
             // Check tag filter if specified
             if ($tag !== null && !$this->matchesTag($runner, $tag)) {
                 Log::debug("Skipping runner due to tag filter", [
-                    'file' => basename($file),
+                    'file' => $runnerName,
                     'required_tag' => $tag,
                     'runner_tag' => $runner->tag ?? 'none'
                 ]);
+                $this->skippedFiles[] = $file;
                 return;
             }
 
-            Log::info("Executing runner: " . basename($file), [
-                'tag' => $runner->tag ?? 'none'
+            Log::info("Executing runner: {$runnerName}", [
+                'tag' => $runner->tag ?? 'none',
+                'type' => $runner instanceof Runner ? $runner->getType() : 'unknown'
             ]);
 
             // Execute before hook if available
             if ($runner instanceof Runner || method_exists($runner, 'before')) {
-                Log::debug("Executing before hook: " . basename($file));
+                Log::debug("Executing before hook: {$runnerName}");
                 $runner->before();
             }
 
@@ -163,13 +202,18 @@ class RunnerService
 
             // Execute after hook if available
             if ($runner instanceof Runner || method_exists($runner, 'after')) {
-                Log::debug("Executing after hook: " . basename($file));
+                Log::debug("Executing after hook: {$runnerName}");
                 $runner->after();
+            }
+
+            // Track execution
+            if ($this->trackExecutions) {
+                $this->trackExecution($runnerName, $runner);
             }
 
             $this->executedFiles[] = $file;
 
-            Log::info("Successfully executed runner: " . basename($file));
+            Log::info("Successfully executed runner: {$runnerName}");
 
         } catch (Throwable $e) {
             $error = [
@@ -180,7 +224,85 @@ class RunnerService
 
             $this->errors[] = $error;
             
-            Log::error("Failed to execute runner: " . basename($file), $error);
+            Log::error("Failed to execute runner: {$runnerName}", $error);
+        }
+    }
+
+    /**
+     * Determine if runner should be skipped based on type.
+     *
+     * @param string $runnerName
+     * @param object $runner
+     * @return bool
+     */
+    private function shouldSkipBasedOnType(string $runnerName, object $runner): bool
+    {
+        if (!RunnerModel::hasBeenExecuted($runnerName)) {
+            return false;
+        }
+
+        // If runner is TYPE_ONCE, skip if already executed
+        if ($runner instanceof Runner && $runner->isTypeOnce()) {
+            Log::debug("Skipping TYPE_ONCE runner that was already executed: {$runnerName}");
+            $this->skippedFiles[] = $runnerName;
+            return true;
+        }
+
+        // TYPE_ALWAYS runners are never skipped (except with force flag logic)
+        if ($runner instanceof Runner && $runner->isTypeAlways()) {
+            Log::debug("Re-executing TYPE_ALWAYS runner: {$runnerName}");
+            return false;
+        }
+
+        // For non-Runner objects, check if they have a type property
+        if (property_exists($runner, 'type')) {
+            if ($runner->type === Runner::TYPE_ONCE) {
+                Log::debug("Skipping TYPE_ONCE runner that was already executed: {$runnerName}");
+                $this->skippedFiles[] = $runnerName;
+                return true;
+            }
+        } else {
+            // Default behavior: skip if already executed
+            Log::debug("Skipping already executed runner (default TYPE_ONCE): {$runnerName}");
+            $this->skippedFiles[] = $runnerName;
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Track runner execution in database.
+     *
+     * @param string $name
+     * @param object $runner
+     */
+    private function trackExecution(string $name, object $runner): void
+    {
+        try {
+            $data = [];
+
+            if ($runner instanceof Runner) {
+                $data = [
+                    'tag' => $runner->getTag(),
+                    'description' => $runner->getDescription(),
+                    'priority' => $runner->getPriority(),
+                    'type' => $runner->getType(),
+                ];
+            } elseif (property_exists($runner, 'tag')) {
+                $data['tag'] = $runner->tag;
+                if (property_exists($runner, 'type')) {
+                    $data['type'] = $runner->type;
+                }
+            }
+
+            RunnerModel::markAsExecuted($name, $data);
+            
+            Log::debug("Tracked execution for runner: {$name}", ['type' => $data['type'] ?? 'once']);
+        } catch (Throwable $e) {
+            Log::warning("Failed to track runner execution: {$name}", [
+                'error' => $e->getMessage()
+            ]);
         }
     }
 
@@ -237,6 +359,7 @@ class RunnerService
     private function reset(): void
     {
         $this->executedFiles = [];
+        $this->skippedFiles = [];
         $this->errors = [];
     }
 
@@ -249,8 +372,10 @@ class RunnerService
     {
         return [
             'executed_count' => count($this->executedFiles),
+            'skipped_count' => count($this->skippedFiles),
             'error_count' => count($this->errors),
             'executed_files' => array_map('basename', $this->executedFiles),
+            'skipped_files' => array_map('basename', $this->skippedFiles),
             'errors' => $this->errors,
             'success' => empty($this->errors)
         ];
@@ -264,6 +389,16 @@ class RunnerService
     public function getExecutedFiles(): array
     {
         return $this->executedFiles;
+    }
+
+    /**
+     * Get list of skipped files.
+     *
+     * @return array
+     */
+    public function getSkippedFiles(): array
+    {
+        return $this->skippedFiles;
     }
 
     /**
