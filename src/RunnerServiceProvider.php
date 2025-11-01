@@ -1,0 +1,34 @@
+<?php
+
+namespace Obelaw\Runner;
+
+use Illuminate\Support\ServiceProvider;
+use Obelaw\Runner\Console\Commands\RunnerCommand;
+
+class RunnerServiceProvider extends ServiceProvider
+{
+
+    /**
+     * Register services.
+     *
+     * @return void
+     */
+    public function register()
+    {
+        //
+    }
+
+    /**
+     * Bootstrap services.
+     *
+     * @return void
+     */
+    public function boot()
+    {
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                RunnerCommand::class,
+            ]);
+        }
+    }
+}
