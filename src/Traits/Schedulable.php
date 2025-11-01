@@ -3,6 +3,7 @@
 namespace Obelaw\Runner\Traits;
 
 use Carbon\Carbon;
+use Cron\CronExpression;
 use Obelaw\Runner\Models\RunnerModel;
 
 trait Schedulable
@@ -15,9 +16,14 @@ trait Schedulable
      * - '0 0 * * *' (daily at midnight)
      * - '0 0 * * 0' (weekly on Sunday)
      * - '0 0 1 * *' (monthly on the 1st)
+     * - '0 8-23,0-3 * * *' (at minute 0, hours 8-23 and 0-3)
      *
      * @var string|null
-     * @example protected ?string $schedule = null;
+     */
+
+    /**
+     * The cron expression for scheduling.
+     * @var string|null
      */
     protected ?string $schedule = null;
 
@@ -54,7 +60,13 @@ trait Schedulable
             return true;
         }
 
-        return $this->cronMatches($this->schedule, Carbon::now());
+        try {
+            $cron = new CronExpression($this->schedule);
+            return $cron->isDue(Carbon::now());
+        } catch (\Exception $e) {
+            // Invalid cron expression
+            return false;
+        }
     }
 
     /**
@@ -65,43 +77,60 @@ trait Schedulable
      */
     protected function hasRunInCurrentPeriod(Carbon $lastRun): bool
     {
-        $now = Carbon::now();
-
-        // Parse cron expression
-        $parts = explode(' ', $this->schedule);
-        if (count($parts) !== 5) {
+        if (!$this->schedule) {
             return false;
         }
 
-        [$minute, $hour, $day, $month, $dayOfWeek] = $parts;
+        try {
+            $cron = new CronExpression($this->schedule);
+            $now = Carbon::now();
+            
+            // Get the previous run time according to the cron schedule
+            $previousRunTime = Carbon::instance($cron->getPreviousRunDate($now));
+            
+            // Check if the last run was after or at the previous scheduled run time
+            return $lastRun->greaterThanOrEqualTo($previousRunTime);
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
 
-        // Check based on the most specific part of the schedule
-        if ($minute !== '*') {
-            // Runs at specific minute(s), check if run in current minute
-            return $lastRun->isSameMinute($now);
+    /**
+     * Get the next run time based on the schedule.
+     *
+     * @return Carbon|null
+     */
+    public function getNextRunTime(): ?Carbon
+    {
+        if (!$this->schedule) {
+            return null;
         }
 
-        if ($hour !== '*') {
-            // Runs at specific hour(s), check if run in current hour
-            return $lastRun->isSameHour($now);
+        try {
+            $cron = new CronExpression($this->schedule);
+            return Carbon::instance($cron->getNextRunDate());
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Get the previous run time based on the schedule.
+     *
+     * @return Carbon|null
+     */
+    public function getPreviousRunTime(): ?Carbon
+    {
+        if (!$this->schedule) {
+            return null;
         }
 
-        if ($day !== '*') {
-            // Runs on specific day(s), check if run today
-            return $lastRun->isSameDay($now);
+        try {
+            $cron = new CronExpression($this->schedule);
+            return Carbon::instance($cron->getPreviousRunDate());
+        } catch (\Exception $e) {
+            return null;
         }
-
-        if ($month !== '*') {
-            // Runs in specific month(s), check if run this month
-            return $lastRun->isSameMonth($now);
-        }
-
-        if ($dayOfWeek !== '*') {
-            // Runs on specific day(s) of week, check if run on same day of week
-            return $lastRun->isSameDay($now);
-        }
-
-        return false;
     }
 
     /**
@@ -136,66 +165,17 @@ trait Schedulable
     }
 
     /**
-     * Check if current time matches cron expression.
+     * Validate the cron expression.
      *
-     * @param string $cronExpression
-     * @param Carbon $now
      * @return bool
      */
-    protected function cronMatches(string $cronExpression, Carbon $now): bool
+    public function isValidSchedule(): bool
     {
-        $parts = explode(' ', $cronExpression);
-        if (count($parts) !== 5) {
+        if (!$this->schedule) {
             return false;
         }
 
-        [$minute, $hour, $day, $month, $dayOfWeek] = $parts;
-
-        return $this->matchesPart($minute, $now->minute, 0, 59) &&
-            $this->matchesPart($hour, $now->hour, 0, 23) &&
-            $this->matchesPart($day, $now->day, 1, 31) &&
-            $this->matchesPart($month, $now->month, 1, 12) &&
-            $this->matchesPart($dayOfWeek, $now->dayOfWeek, 0, 6);
-    }
-
-    /**
-     * Check if a value matches a cron part.
-     *
-     * @param string $expression
-     * @param int $value
-     * @param int $min
-     * @param int $max
-     * @return bool
-     */
-    protected function matchesPart(string $expression, int $value, int $min, int $max): bool
-    {
-        // Wildcard matches everything
-        if ($expression === '*') {
-            return true;
-        }
-
-        // Handle step values (e.g., */5)
-        if (str_contains($expression, '/')) {
-            [$range, $step] = explode('/', $expression);
-            if ($range === '*') {
-                return $value % (int)$step === 0;
-            }
-        }
-
-        // Handle ranges (e.g., 1-5)
-        if (str_contains($expression, '-')) {
-            [$start, $end] = explode('-', $expression);
-            return $value >= (int)$start && $value <= (int)$end;
-        }
-
-        // Handle lists (e.g., 1,3,5)
-        if (str_contains($expression, ',')) {
-            $values = array_map('intval', explode(',', $expression));
-            return in_array($value, $values);
-        }
-
-        // Single value
-        return $value === (int)$expression;
+        return CronExpression::isValidExpression($this->schedule);
     }
 
     /**
@@ -334,5 +314,34 @@ trait Schedulable
     public function getSchedule(): ?string
     {
         return $this->schedule;
+    }
+
+    /**
+     * Get multiple next run dates.
+     *
+     * @param int $count Number of next run dates to get
+     * @return array Array of Carbon instances
+     */
+    public function getNextRunDates(int $count = 5): array
+    {
+        if (!$this->schedule) {
+            return [];
+        }
+
+        try {
+            $cron = new CronExpression($this->schedule);
+            $dates = [];
+            $currentDate = Carbon::now();
+
+            for ($i = 0; $i < $count; $i++) {
+                $nextDate = Carbon::instance($cron->getNextRunDate($currentDate));
+                $dates[] = $nextDate;
+                $currentDate = $nextDate;
+            }
+
+            return $dates;
+        } catch (\Exception $e) {
+            return [];
+        }
     }
 }
