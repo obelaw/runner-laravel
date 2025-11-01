@@ -2,11 +2,11 @@
 
 namespace Obelaw\Runner\Services;
 
-use Obelaw\Runner\Runner;
-use Obelaw\Runner\Models\RunnerModel;
+use Exception;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
-use Exception;
+use Obelaw\Runner\Models\RunnerModel;
+use Obelaw\Runner\Runner;
 use Throwable;
 
 class RunnerService
@@ -256,7 +256,7 @@ class RunnerService
 
         // For non-Runner objects, check if they have a type property
         if (property_exists($runner, 'type')) {
-            if ($runner->type === Runner::TYPE_ONCE) {
+            if ($runner->getType() === Runner::TYPE_ONCE) {
                 Log::debug("Skipping TYPE_ONCE runner that was already executed: {$runnerName}");
                 $this->skippedFiles[] = $runnerName;
                 return true;
