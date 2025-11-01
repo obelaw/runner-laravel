@@ -5,6 +5,7 @@ namespace Obelaw\Runner;
 use Illuminate\Support\ServiceProvider;
 use Obelaw\Runner\Console\Commands\RunnerCommand;
 use Obelaw\Runner\Console\Commands\RunnerMakeCommand;
+use Obelaw\Runner\RunnerPool;
 
 class RunnerServiceProvider extends ServiceProvider
 {
@@ -26,6 +27,9 @@ class RunnerServiceProvider extends ServiceProvider
      */
     public function boot()
     {
+        // Register the default runners' path
+        RunnerPool::addPath(base_path('runners'));
+
         if ($this->app->runningInConsole()) {
             $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
 
