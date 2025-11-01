@@ -12,6 +12,7 @@ class RunnerCommand extends Command
      * Signature with rich filtering & execution controls.
      */
     protected $signature = 'runner:run 
+                            {name? : Specific runner name to execute}
                             {--tag= : Filter runners by tag}
                             {--force : Force re-execution of all runners (including TYPE_ONCE)}';
 
@@ -24,27 +25,40 @@ class RunnerCommand extends Command
 
     public function handle(): void
     {
+        $name = $this->argument('name');
         $tag = $this->option('tag');
         $force = $this->option('force');
         
+        $runnerService = new RunnerService(RunnerPool::getPaths());
+        
+        if ($force) {
+            $runnerService->force(true);
+            $this->warn("Force mode: Re-executing all runners including TYPE_ONCE");
+        }
+
+        // Run specific runner by name
+        if ($name) {
+            $this->info("Running specific runner: {$name}");
+            
+            try {
+                $summary = $runnerService->runByName($name);
+                $this->displaySummary($summary, $tag);
+            } catch (\Exception $e) {
+                $this->error("Error: {$e->getMessage()}");
+                return;
+            }
+            
+            return;
+        }
+
+        // Run all runners or by tag
         if ($tag) {
             $this->info("Running runners with tag: {$tag}");
         } else {
             $this->info("Running all runners...");
         }
 
-        if ($force) {
-            $this->warn("Force mode: Re-executing all runners including TYPE_ONCE");
-        }
-
-        $runnerService = new RunnerService(RunnerPool::getPaths());
-        
-        if ($force) {
-            $runnerService->force(true);
-        }
-
         $summary = $runnerService->run($tag);
-
         $this->displaySummary($summary, $tag);
     }
 

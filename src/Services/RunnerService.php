@@ -86,6 +86,72 @@ class RunnerService
     }
 
     /**
+     * Run a specific runner by name.
+     *
+     * @param string $runnerName The filename of the runner (e.g., '2024_11_01_120000_create_categories.php')
+     * @return array Summary of execution results
+     * @throws Exception If runner file not found
+     */
+    public function runByName(string $runnerName): array
+    {
+        $this->reset();
+
+        // Find the runner file across all pools
+        $runnerFile = $this->findRunnerByName($runnerName);
+
+        if (!$runnerFile) {
+            throw new Exception("Runner file not found: {$runnerName}");
+        }
+
+        Log::info("Running specific runner: {$runnerName}");
+
+        // Execute the runner
+        $this->executeRunner($runnerFile);
+
+        $summary = $this->getExecutionSummary();
+        Log::info('Runner execution completed', $summary);
+
+        return $summary;
+    }
+
+    /**
+     * Find a runner file by name across all pools.
+     *
+     * @param string $runnerName
+     * @return string|null Full path to the runner file, or null if not found
+     */
+    private function findRunnerByName(string $runnerName): ?string
+    {
+        // Normalize the runner name (remove .php if present, add it back)
+        $runnerName = str_replace('.php', '', $runnerName) . '.php';
+
+        foreach ($this->runnerPools as $path) {
+            if (!is_dir($path)) {
+                continue;
+            }
+
+            $filePath = $path . DIRECTORY_SEPARATOR . $runnerName;
+            
+            if (file_exists($filePath)) {
+                return $filePath;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Check if a runner exists by name.
+     *
+     * @param string $runnerName
+     * @return bool
+     */
+    public function runnerExists(string $runnerName): bool
+    {
+        return $this->findRunnerByName($runnerName) !== null;
+    }
+
+    /**
      * Validate runner pools configuration.
      *
      * @param array $runnerPools
