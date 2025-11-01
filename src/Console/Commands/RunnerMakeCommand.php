@@ -98,6 +98,22 @@ class RunnerMakeCommand extends Command
             );
         }
 
+        // Prompt for schedule
+        $hasSchedule = confirm(
+            label: 'Do you want to add a schedule (cron expression)?',
+            default: false
+        );
+
+        $schedule = null;
+        if ($hasSchedule) {
+            $schedule = text(
+                label: 'Enter cron expression:',
+                placeholder: 'e.g., * * * * * (every minute), 0 0 * * * (daily at midnight)',
+                required: false,
+                hint: 'Use Schedulable trait methods like hourly(), daily(), etc. in the runner constructor'
+            );
+        }
+
         // Get the path where runner will be created
         $path = $this->selectRunnerPath();
 
@@ -123,7 +139,7 @@ class RunnerMakeCommand extends Command
         }
 
         // Generate the runner content
-        $content = $this->generateRunnerContent($name, $tag, $description, $priority, $type);
+        $content = $this->generateRunnerContent($name, $tag, $description, $priority, $type, $schedule);
 
         // Write the file
         file_put_contents($filepath, $content);
@@ -139,6 +155,9 @@ class RunnerMakeCommand extends Command
         }
         $this->components->twoColumnDetail('Type', $type);
         $this->components->twoColumnDetail('Priority', (string) $priority);
+        if ($schedule) {
+            $this->components->twoColumnDetail('Schedule', $schedule);
+        }
 
         return Command::SUCCESS;
     }
@@ -197,6 +216,7 @@ class RunnerMakeCommand extends Command
      * @param string|null $description
      * @param int $priority
      * @param string $type
+     * @param string|null $schedule
      * @return string
      */
     protected function generateRunnerContent(
@@ -204,11 +224,13 @@ class RunnerMakeCommand extends Command
         ?string $tag,
         ?string $description,
         int $priority,
-        string $type
+        string $type,
+        ?string $schedule
     ): string {
         $tagLine = $tag ? "    public ?string \$tag = '{$tag}';" : "    public ?string \$tag = null;";
         $descLine = $description ? "    public ?string \$description = '{$description}';" : "    public ?string \$description = null;";
         $typeLine = "    protected string \$type = Runner::TYPE_" . strtoupper($type) . ";";
+        $scheduleLine = $schedule ? "    protected ?string \$schedule = '{$schedule}';" : "    protected ?string \$schedule = null;";
 
         return <<<PHP
 <?php
@@ -236,6 +258,12 @@ return new class extends Runner
      * The type of runner execution: 'once' or 'always'.
      */
 {$typeLine}
+
+    /**
+     * The cron expression for scheduling.
+     * @var string|null
+     */
+{$scheduleLine}
 
     /**
      * Execute the runner logic.
@@ -266,17 +294,6 @@ return new class extends Runner
     public function after(): void
     {
         // Optional: Add post-execution logic
-    }
-
-    /**
-     * Determine if the runner should be executed.
-     *
-     * @return bool
-     */
-    public function shouldRun(): bool
-    {
-        // Optional: Add conditional logic
-        return true;
     }
 
     /**

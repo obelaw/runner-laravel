@@ -2,8 +2,11 @@
 
 namespace Obelaw\Runner;
 
+use Obelaw\Runner\Traits\Schedulable;
+
 abstract class Runner
 {
+    use Schedulable;
     const TYPE_ONCE = 'once';
     const TYPE_ALWAYS = 'always';
 
@@ -50,6 +53,11 @@ abstract class Runner
      */
     public function shouldRun(): bool
     {
+        // Check schedule if defined
+        if (method_exists($this, 'shouldRunBySchedule')) {
+            return $this->shouldRunBySchedule();
+        }
+
         return true;
     }
 
@@ -197,6 +205,7 @@ abstract class Runner
             'priority' => $this->priority,
             'description' => $this->description,
             'type' => $this->type,
+            'schedule' => $this->getSchedule(),
         ];
     }
 }
