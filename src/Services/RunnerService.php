@@ -6,6 +6,7 @@ use Exception;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use Obelaw\Runner\Models\RunnerModel;
+use Obelaw\Runner\Models\RunnerLog;
 use Obelaw\Runner\Runner;
 use Throwable;
 
@@ -171,6 +172,7 @@ class RunnerService
     private function executeRunner(string $file, ?string $tag = null): void
     {
         $runnerName = basename($file);
+        $runnerLog = null;
 
         try {
             if (!file_exists($file) || !is_readable($file)) {
@@ -209,10 +211,21 @@ class RunnerService
                 return;
             }
 
+            // Start logging execution
+            if ($this->trackExecutions) {
+                $runnerLog = RunnerLog::logStart($runnerName, [
+                    'tag' => $runner instanceof Runner ? $runner->getTag() : ($runner->tag ?? null),
+                    'type' => $runner instanceof Runner ? $runner->getType() : Runner::TYPE_ONCE,
+                ]);
+            }
+
             Log::info("Executing runner: {$runnerName}", [
                 'tag' => $runner->tag ?? 'none',
                 'type' => $runner instanceof Runner ? $runner->getType() : 'unknown'
             ]);
+
+            // Capture output
+            ob_start();
 
             // Execute before hook if available
             if ($runner instanceof Runner || method_exists($runner, 'before')) {
@@ -229,6 +242,14 @@ class RunnerService
                 $runner->after();
             }
 
+            // Get captured output
+            $output = ob_get_clean();
+
+            // Mark log as completed
+            if ($runnerLog) {
+                $runnerLog->markCompleted($output);
+            }
+
             // Track execution
             if ($this->trackExecutions) {
                 $this->trackExecution($runnerName, $runner);
@@ -239,6 +260,16 @@ class RunnerService
             Log::info("Successfully executed runner: {$runnerName}");
 
         } catch (Throwable $e) {
+            // Clean output buffer if active
+            if (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+
+            // Mark log as failed
+            if ($runnerLog) {
+                $runnerLog->markFailed($e->getMessage() . ' at line ' . $e->getLine());
+            }
+
             $error = [
                 'file' => $file,
                 'error' => $e->getMessage(),

@@ -3,6 +3,7 @@
 namespace Obelaw\Runner\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Obelaw\Runner\Runner;
 
 class RunnerModel extends Model
@@ -21,6 +22,14 @@ class RunnerModel extends Model
     protected $casts = [
         'executed_at' => 'datetime',
     ];
+
+    /**
+     * Get all logs for this runner.
+     */
+    public function logs(): HasMany
+    {
+        return $this->hasMany(RunnerLog::class, 'runner_name', 'name');
+    }
 
     /**
      * Check if a runner has been executed.
@@ -80,5 +89,21 @@ class RunnerModel extends Model
     public static function getAlwaysRunners()
     {
         return static::where('type', Runner::TYPE_ALWAYS)->get();
+    }
+
+    /**
+     * Get the last execution log.
+     */
+    public function lastLog()
+    {
+        return $this->logs()->latest()->first();
+    }
+
+    /**
+     * Get failed execution logs.
+     */
+    public function failedLogs()
+    {
+        return $this->logs()->failed()->get();
     }
 }
