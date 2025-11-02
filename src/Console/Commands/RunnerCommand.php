@@ -14,7 +14,8 @@ class RunnerCommand extends Command
     protected $signature = 'runner:run 
                             {name? : Specific runner name to execute}
                             {--tag= : Filter runners by tag}
-                            {--force : Force re-execution of all runners (including TYPE_ONCE)}';
+                            {--force : Force re-execution of all runners (including TYPE_ONCE)}
+                            {--scheduled : Run only runners with defined schedules}';
 
     /**
      * The console command description.
@@ -28,6 +29,7 @@ class RunnerCommand extends Command
         $name = $this->argument('name');
         $tag = $this->option('tag');
         $force = $this->option('force');
+        $scheduled = $this->option('scheduled');
         
         $runnerService = new RunnerService(RunnerPool::getPaths());
         
@@ -36,13 +38,18 @@ class RunnerCommand extends Command
             $this->warn("Force mode: Re-executing all runners including TYPE_ONCE");
         }
 
+        if ($scheduled) {
+            $runnerService->scheduledOnly(true);
+        }
+
         // Run specific runner by name
         if ($name) {
-            $this->info("Running specific runner: {$name}");
+            $message = $scheduled ? "Running specific scheduled runner: {$name}" : "Running specific runner: {$name}";
+            $this->info($message);
             
             try {
                 $summary = $runnerService->runByName($name);
-                $this->displaySummary($summary, $tag);
+                $this->displaySummary($summary, $tag, $scheduled);
             } catch (\Exception $e) {
                 $this->error("Error: {$e->getMessage()}");
                 return;
@@ -52,14 +59,18 @@ class RunnerCommand extends Command
         }
 
         // Run all runners or by tag
-        if ($tag) {
+        if ($scheduled && $tag) {
+            $this->info("Running scheduled runners with tag: {$tag}");
+        } elseif ($scheduled) {
+            $this->info("Running all scheduled runners...");
+        } elseif ($tag) {
             $this->info("Running runners with tag: {$tag}");
         } else {
             $this->info("Running all runners...");
         }
 
         $summary = $runnerService->run($tag);
-        $this->displaySummary($summary, $tag);
+        $this->displaySummary($summary, $tag, $scheduled);
     }
 
     /**
@@ -67,13 +78,18 @@ class RunnerCommand extends Command
      *
      * @param array $summary
      * @param string|null $tag
+     * @param bool $scheduled
      */
-    private function displaySummary(array $summary, ?string $tag = null): void
+    private function displaySummary(array $summary, ?string $tag = null, bool $scheduled = false): void
     {
         $this->newLine();
         
         if ($summary['executed_count'] === 0 && $summary['skipped_count'] === 0) {
-            if ($tag) {
+            if ($scheduled && $tag) {
+                $this->warn("No scheduled runners found with tag: {$tag}");
+            } elseif ($scheduled) {
+                $this->warn("No scheduled runners found");
+            } elseif ($tag) {
                 $this->warn("No runners found with tag: {$tag}");
             } else {
                 $this->warn("No runners were executed");
@@ -88,7 +104,8 @@ class RunnerCommand extends Command
         }
 
         if ($summary['skipped_count'] > 0) {
-            $this->warn("⊘ Skipped {$summary['skipped_count']} runner(s) (TYPE_ONCE already executed)");
+            $reason = $scheduled ? "(not scheduled or TYPE_ONCE already executed)" : "(TYPE_ONCE already executed)";
+            $this->warn("⊘ Skipped {$summary['skipped_count']} runner(s) {$reason}");
         }
 
         if (!empty($summary['executed_files'])) {

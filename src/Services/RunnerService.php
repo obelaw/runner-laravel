@@ -18,6 +18,7 @@ class RunnerService
     private array $errors = [];
     private bool $trackExecutions = true;
     private bool $force = false;
+    private bool $scheduledOnly = false;
 
     public function __construct(array $runnerPools)
     {
@@ -50,6 +51,18 @@ class RunnerService
     }
 
     /**
+     * Run only scheduled runners.
+     *
+     * @param bool $scheduledOnly
+     * @return $this
+     */
+    public function scheduledOnly(bool $scheduledOnly = true): self
+    {
+        $this->scheduledOnly = $scheduledOnly;
+        return $this;
+    }
+
+    /**
      * Run all runners from the configured pools.
      *
      * @param string|null $tag Filter runners by tag
@@ -66,13 +79,24 @@ class RunnerService
             return $this->getExecutionSummary();
         }
 
+        // Filter scheduled runners if flag is set
+        if ($this->scheduledOnly) {
+            $runnersFiles = $this->filterScheduledRunners($runnersFiles);
+            
+            if (empty($runnersFiles)) {
+                Log::info('No scheduled runner files found.');
+                return $this->getExecutionSummary();
+            }
+        }
+
         // Sort runners by filename (timestamp-based names will be sorted chronologically)
         $runnersFiles = $this->sortRunnersByName($runnersFiles);
 
         Log::info('Starting runner execution', [
             'total_files' => count($runnersFiles),
             'tag_filter' => $tag,
-            'force' => $this->force
+            'force' => $this->force,
+            'scheduled_only' => $this->scheduledOnly
         ]);
 
         foreach ($runnersFiles as $file) {
@@ -103,6 +127,15 @@ class RunnerService
             throw new Exception("Runner file not found: {$runnerName}");
         }
 
+        // If scheduledOnly is set, check if runner has a schedule
+        if ($this->scheduledOnly) {
+            $runner = $this->loadRunner($runnerFile);
+            if (!$this->hasSchedule($runner)) {
+                Log::info("Runner '{$runnerName}' does not have a schedule defined. Skipping.");
+                return $this->getExecutionSummary();
+            }
+        }
+
         Log::info("Running specific runner: {$runnerName}");
 
         // Execute the runner
@@ -112,6 +145,63 @@ class RunnerService
         Log::info('Runner execution completed', $summary);
 
         return $summary;
+    }
+
+    /**
+     * Filter runner files to only include those with schedules.
+     *
+     * @param array $runnersFiles
+     * @return array
+     */
+    private function filterScheduledRunners(array $runnersFiles): array
+    {
+        $scheduled = [];
+
+        foreach ($runnersFiles as $file) {
+            try {
+                $runner = $this->loadRunner($file);
+                
+                if ($this->hasSchedule($runner)) {
+                    $scheduled[] = $file;
+                    Log::debug("Found scheduled runner: " . basename($file));
+                }
+            } catch (Throwable $e) {
+                Log::warning("Failed to load runner for schedule check: " . basename($file), [
+                    'error' => $e->getMessage()
+                ]);
+                continue;
+            }
+        }
+
+        Log::info("Filtered scheduled runners", [
+            'total' => count($runnersFiles),
+            'scheduled' => count($scheduled)
+        ]);
+
+        return $scheduled;
+    }
+
+    /**
+     * Check if a runner has a schedule defined.
+     *
+     * @param mixed $runner
+     * @return bool
+     */
+    private function hasSchedule($runner): bool
+    {
+        if (!is_object($runner)) {
+            return false;
+        }
+
+        if ($runner instanceof Runner) {
+            return $runner->getSchedule() !== null;
+        }
+
+        if (property_exists($runner, 'schedule')) {
+            return $runner->schedule !== null;
+        }
+
+        return false;
     }
 
     /**
@@ -257,13 +347,19 @@ class RunnerService
                 return;
             }
 
-            // Check if runner should run
-            if ($runner instanceof Runner && !$runner->shouldRun()) {
+            // Check if runner should run (skip schedule check if force mode is enabled)
+            if ($runner instanceof Runner && !$this->force && !$runner->shouldRun()) {
                 Log::debug("Skipping runner due to shouldRun() condition", [
-                    'file' => $runnerName
+                    'file' => $runnerName,
+                    'schedule' => $runner->getSchedule()
                 ]);
                 $this->skippedFiles[] = $file;
                 return;
+            }
+
+            // Log if force mode is bypassing schedule
+            if ($this->force && $runner instanceof Runner && $runner->getSchedule()) {
+                Log::debug("Force mode: Bypassing schedule check for runner: {$runnerName}");
             }
 
             // Check tag filter if specified
@@ -287,7 +383,8 @@ class RunnerService
 
             Log::info("Executing runner: {$runnerName}", [
                 'tag' => $runner->tag ?? 'none',
-                'type' => $runner instanceof Runner ? $runner->getType() : 'unknown'
+                'type' => $runner instanceof Runner ? $runner->getType() : 'unknown',
+                'forced' => $this->force
             ]);
 
             // Capture output
